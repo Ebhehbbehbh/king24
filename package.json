@@ -11,7 +11,12 @@
     "dev": "nodemon server.js",
     "test": "node test.js"
   },
-  "keywords": ["telegram", "bot", "device-control", "remote"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "device-control",
+    "remote"
+  ],
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
